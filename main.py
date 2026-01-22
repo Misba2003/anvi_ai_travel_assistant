@@ -126,6 +126,10 @@ async def ask_ai(req: AskRequest):
                         else:
                             amenities_str = "Not provided"
 
+                        description = entity_data.get("description") or "Not provided"
+                        if description and len(description) > 200:
+                            description = description[:200].rstrip() + "..."
+
                         # Minimal single-entity context (no multi-entity fetch)
                         entity_context = (
                             "[1]\n"
@@ -133,7 +137,7 @@ async def ask_ai(req: AskRequest):
                             f"Rating: {entity_data.get('rating') or 'Not provided'}\n"
                             f"Address: {entity_data.get('address') or 'Not provided'}\n"
                             f"Amenities: {amenities_str}\n"
-                            "Description: Not provided\n"
+                            f"Description: {description}\n"
                             "----"
                         )
 
@@ -150,13 +154,14 @@ async def ask_ai(req: AskRequest):
                         )
 
                         # Single card (do not fetch multiple hotels)
+                        # Match structure of generic search cards
                         card = {
                             "title": entity_data.get("name"),
-                            "subtitle": "",
+                            "subtitle": entity_data.get("area_name") or entity_data.get("zone_name") or "",
                             "rating": entity_data.get("rating"),
                             "address": entity_data.get("address"),
-                            "description": "",
-                            "image": None
+                            "description": entity_data.get("description") or "",
+                            "image": entity_data.get("image_url")
                         }
 
                         # Store assistant reply in memory

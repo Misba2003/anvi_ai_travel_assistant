@@ -106,6 +106,11 @@ def normalize_hotel_entity(hotel: Dict[str, Any]) -> Dict[str, Any]:
         "kitchen_available": hotel.get("kitchen_available") == "Y" or hotel.get("kitchen_available") == True,
         "taxes_included": hotel.get("taxes_included") == "Y" or hotel.get("taxes_included") == True,
         "cancellation": hotel.get("cancellation"),
+        # Card fields (for entity-only queries)
+        "image_url": hotel.get("image_url"),
+        "area_name": hotel.get("area_name"),
+        "zone_name": hotel.get("zone_name"),
+        "description": hotel.get("description") or hotel.get("short_description"),
         # Backend-only identifiers for internal navigation/filtering
         "table_id": hotel.get("table_id"),
         "category_id": hotel.get("category_id"),
