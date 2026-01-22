@@ -32,6 +32,11 @@ app = FastAPI(title="ANVI AI Backend")
 def health():
     return {"ok": True}
 
+@app.get("/")
+def root():
+    return {"status": "ok"}
+
+
 
 app.add_middleware(
     CORSMiddleware,
