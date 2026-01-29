@@ -21,7 +21,7 @@ load_dotenv(dotenv_path)
 from services.intent_service import extract_intent, detect_attribute
 from services.rag_service import get_rag_context, get_rag_items
 from services.llm_service import answer_with_ai
-from services.memory_service import add_to_memory, get_memory, get_memory_size
+from services.memory_service import get_recent_messages, save_message
 from services.data_service import resolve_entity, format_attribute_answer, normalize_name
 
 # ------------------------
@@ -51,9 +51,7 @@ app.add_middleware(
 # ------------------------
 class AskRequest(BaseModel):
     query: str
-    session_id: str
-
-
+    session_id: str |None= None
 # ------------------------
 # MAIN ENDPOINT
 # ------------------------
@@ -70,26 +68,27 @@ async def ask_ai(
         token = authorization.split(" ", 1)[1].strip()
         if not token:
             raise HTTPException(status_code=401, detail="Unauthorized")
+        app_user_id = token
 
         query = req.query.strip()
-        session_id = req.session_id.strip()
+        session_id = (req.session_id or "").strip()
+
 
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")
 
-        if not session_id:
-            raise HTTPException(status_code=400, detail="Session ID is required")
-
         print(f"[DEBUG] /ask → {query} | session: {session_id}")
 
-        # 1️⃣ Store USER message in SESSION memory
-        mem_size = await add_to_memory(session_id, "user", query)
-        print(f"[DEBUG] Memory size after user msg: {mem_size} | session={session_id}")
+        # 1️⃣ Store USER message in persistent memory (by app_user_id)
+        await save_message(app_user_id, "user", query)
+        mem_size = 0
+        print("[DEBUG] Stored user message in PostgreSQL memory")
 
         # 2️⃣ Extract intent
         intent = extract_intent(query)
         category_keyword = intent["category"]
-        print(f"[DEBUG] Intent category={category_keyword} | session={session_id}")
+        print("[DEBUG] Stored reply in PostgreSQL memory")
+
 
         # 2.5️⃣ Entity + Attribute Bypass (before RAG/LLM)
         if intent.get("type") == "entity_lookup":
@@ -107,7 +106,8 @@ async def ask_ai(
                         answer = format_attribute_answer(entity_data, detected_attribute, value)
 
                         # Store assistant reply in memory
-                        mem_size = await add_to_memory(session_id, "assistant", answer)
+                        await save_message(app_user_id, "assistant", answer)
+                        mem_size = 0
                         print(f"[DEBUG] Entity attribute response. Memory size={mem_size} | session={session_id}")
 
                         return {
@@ -126,9 +126,10 @@ async def ask_ai(
                     entity_data = await resolve_entity(entity_name, intent, token=token)
 
                     if entity_data:
-                        # Fetch SESSION memory (needed for LLM call)
-                        memory = await get_memory(session_id)
-                        mem_size = await get_memory_size(session_id)
+                        # Fetch memory for this app_user_id
+                        history = await get_recent_messages(app_user_id)
+                        memory = "\n".join([f"{m['role']}: {m['content']}" for m in history])
+                        mem_size = len(history)
                         print(f"[DEBUG] Memory size={mem_size} | session={session_id}")
 
                         amenities = entity_data.get("amenities") or []
@@ -176,7 +177,8 @@ async def ask_ai(
                         }
 
                         # Store assistant reply in memory
-                        mem_size = await add_to_memory(session_id, "assistant", answer)
+                        await save_message(app_user_id, "assistant", answer)
+                        mem_size = 0
                         print(f"[DEBUG] Entity-only response. Memory size={mem_size} | session={session_id}")
 
                         return {
@@ -218,9 +220,10 @@ async def ask_ai(
                         # ✅ OVERRIDE: Treat as entity-only lookup
                         print(f"[DEBUG] OVERRIDE: Entity resolved '{potential_entity_name}' → treating as entity-only | session={session_id}")
                         
-                        # Fetch SESSION memory (needed for LLM call)
-                        memory = await get_memory(session_id)
-                        mem_size = await get_memory_size(session_id)
+                        # Fetch memory for this app_user_id
+                        history = await get_recent_messages(app_user_id)
+                        memory = "\n".join([f"{m['role']}: {m['content']}" for m in history])
+                        mem_size = len(history)
                         print(f"[DEBUG] Memory size={mem_size} | session={session_id}")
                         
                         amenities = entity_data.get("amenities") or []
@@ -268,7 +271,8 @@ async def ask_ai(
                         }
                         
                         # Store assistant reply in memory
-                        mem_size = await add_to_memory(session_id, "assistant", answer)
+                        await save_message(app_user_id, "assistant", answer)
+                        mem_size = 0
                         print(f"[DEBUG] OVERRIDE: Entity-only response. Memory size={mem_size} | session={session_id}")
                         
                         return {
@@ -286,9 +290,10 @@ async def ask_ai(
         else:
             print(f"[DEBUG] RAG context EMPTY | session={session_id}")
 
-        # 4️⃣ Fetch SESSION memory
-        memory = await get_memory(session_id)
-        mem_size = await get_memory_size(session_id)
+        # 4️⃣ Fetch memory
+        history = await get_recent_messages(app_user_id)
+        memory = "\n".join([f"{m['role']}: {m['content']}" for m in history])
+        mem_size = len(history)
         print(f"[DEBUG] Memory size={mem_size} | session={session_id}")
 
         # 5️⃣ LLM Answer
@@ -313,8 +318,9 @@ async def ask_ai(
                 "image": item.get("image_url")
             })
 
-        # 6️⃣ Store ASSISTANT reply in SESSION memory
-        mem_size = await add_to_memory(session_id, "assistant", answer)
+        # 6️⃣ Store ASSISTANT reply in memory
+        await save_message(app_user_id, "assistant", answer)
+        mem_size = 0
         print(
             f"[DEBUG] Stored assistant reply. Memory size={mem_size} | session={session_id}"
         )
